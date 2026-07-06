@@ -144,6 +144,56 @@ class PremiseSystem:
         critical_layer = math.log(critical_scale) / math.log(self.cov_growth_rate)
         return critical_layer, critical_scale
 
+    def spawn_successor(self, archive=None, concept_weighting="recency"):
+        """
+        現在の系（一度大きく開いて、以前のような広がりを失った系）から、
+        次の系を生み出す。
+
+        - cov・layer・context はリセットする → 「開いた」探索能力を取り戻す
+          （point_of_no_returnを一度リセットするということ）
+        - P（前提ベクトル）だけは、archiveに蓄積されたconceptから継承する
+          → 完全に無関係な新しい系ではなく、「以前の分岐に接続」した状態で始まる
+
+        archive: Archiveインスタンス（Noneならゼロベクトルから始める＝完全に独立した新系）
+        concept_weighting: "recency" = 新しいconceptほど重みを強くする
+                           "uniform" = 全conceptを均等に扱う
+
+        戻り値: 新しい PremiseSystem インスタンス（後継系）
+        """
+        successor = PremiseSystem(
+            dimension=self.dimension,
+            initial_layer=0,
+            assimilation_rate=self.assimilation_rate,
+            cov_growth_rate=self.cov_growth_rate,
+        )
+
+        if archive is not None and archive.concepts:
+            n = len(archive.concepts)
+            if concept_weighting == "recency":
+                weights = np.arange(1, n + 1, dtype=np.float64)
+            else:
+                weights = np.ones(n, dtype=np.float64)
+            weights = weights / weights.sum()
+
+            inherited_P = np.zeros(self.dimension, dtype=np.float64)
+            for w, concept in zip(weights, archive.concepts):
+                # 実embeddingの平均（mean_vector）が記録されていれば、
+                # 意味空間上の実際の位置を継承する。
+                # 古い形式のconcept（mean_vectorがない）は、スカラーのmean_klを
+                # 全次元に複製する旧来のフォールバックにする。
+                vec = concept.get("mean_vector")
+                if vec is not None:
+                    inherited_P += w * vec
+                else:
+                    inherited_P += w * (np.ones(self.dimension) * concept["mean_kl"])
+
+            successor.P = inherited_P
+            # 継承した前提を、後継系自身のcontextの初期値としても持たせておく
+            # （tick()の最初の数ステップが、いきなり全くの無から始まらないように）
+            successor.context = inherited_P.copy()
+
+        return successor
+
 
 # ─────────────────────────────────────────────
 # 🔗 モニターとの結合テスト用のモック（エミュレーション）
